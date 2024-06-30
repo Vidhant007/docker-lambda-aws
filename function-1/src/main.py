@@ -17,9 +17,9 @@ logger.setLevel(logging.INFO)
 # Define constants
 NUM_SENTENCE_CHUNK_SIZE = 10
 MIN_TOKEN_LENGTH = 30
-SECOND_LAMBDA_NAME = "arn:aws:lambda:ap-south-1:808300628517:function:embedder"
+SECOND_LAMBDA_NAME = "arn:aws:lambda:ap-south-1:808300628517:function:Chunk-Embedder"
 AWS_REGION = "ap-south-1"
-S3_BUCKET_NAME = "rag-document-store"
+S3_BUCKET_NAME = "rag-chunk-storage"
 FILTERED_CHUNKS_FILE_KEY = "filtered_chunks.json"
 
 def download_from_s3(bucket: str, key: str, download_path: str):
