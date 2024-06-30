@@ -1,9 +1,10 @@
 import logging
 import os
-import requests
 import fitz  # PyMuPDF
 import spacy
 import re
+import boto3
+import json
 
 # Initialize spaCy
 nlp = spacy.blank("en")
@@ -14,20 +15,17 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Define constants
-PDF_URL = "http://pressbooks.oer.hawaii.edu/humannutrition2/open/download?type=pdf"
-PDF_PATH = "/tmp/human-nutrition-text.pdf"
 NUM_SENTENCE_CHUNK_SIZE = 10
 MIN_TOKEN_LENGTH = 30
+SECOND_LAMBDA_NAME = "arn:aws:lambda:ap-south-1:808300628517:function:embedder"
+AWS_REGION = "ap-south-1"
+S3_BUCKET_NAME = "rag-document-store"
+FILTERED_CHUNKS_FILE_KEY = "filtered_chunks.json"
 
-def download_pdf(url: str, filepath: str):
-    response = requests.get(url)
-    if response.status_code == 200:
-        with open(filepath, "wb") as file:
-            file.write(response.content)
-        logger.info(f"File has been downloaded: {filepath}")
-    else:
-        logger.error(f"Failed to download file: {filepath}")
-        raise Exception(f"Failed to download file: {filepath}")
+def download_from_s3(bucket: str, key: str, download_path: str):
+    s3 = boto3.client('s3', region_name=AWS_REGION)
+    s3.download_file(bucket, key, download_path)
+    logger.info(f"File downloaded from S3: s3://{bucket}/{key} to {download_path}")
 
 def text_formatter(text: str) -> str:
     return text.replace("\n", " ").strip()
@@ -82,23 +80,54 @@ def create_chunks(pages_and_texts):
 def filter_chunks_by_token_length(pages_and_chunks, min_token_length):
     return [chunk for chunk in pages_and_chunks if chunk["chunk_token_count"] > min_token_length]
 
+def upload_to_s3(bucket_name, file_key, data):
+    s3 = boto3.client('s3', region_name=AWS_REGION)
+    s3.put_object(Bucket=bucket_name, Key=file_key, Body=json.dumps(data))
+
+def invoke_second_lambda_with_s3_trigger():
+    lambda_client = boto3.client('lambda', region_name=AWS_REGION)
+    lambda_client.invoke(
+        FunctionName=SECOND_LAMBDA_NAME,
+        InvocationType='Event',  # Asynchronous invocation
+        Payload=json.dumps({
+            "bucket": S3_BUCKET_NAME,
+            "key": FILTERED_CHUNKS_FILE_KEY
+        })
+    )
+    logger.info(f"Second Lambda function triggered with S3 file: s3://{S3_BUCKET_NAME}/{FILTERED_CHUNKS_FILE_KEY}")
+
 def handler(event, context):
-    if not os.path.exists(PDF_PATH):
-        logger.info(f"File does not exist, downloading...")
-        download_pdf(PDF_URL, PDF_PATH)
-    else:
-        logger.info(f"File {PDF_PATH} exists")
+    # Log the received event
+    logger.info(f"Received event: {event}")
 
-    pages_and_texts = open_and_read_pdf(PDF_PATH)
-    pages_and_texts = process_text_with_spacy(pages_and_texts)
-    pages_and_texts = chunk_sentences(pages_and_texts)
-    pages_and_chunks = create_chunks(pages_and_texts)
-    filtered_chunks = filter_chunks_by_token_length(pages_and_chunks, MIN_TOKEN_LENGTH)
+    # Extract bucket and key from the S3 event
+    for record in event['Records']:
+        bucket = record['s3']['bucket']['name']
+        key = record['s3']['object']['key']
+        
+        # Define the path to save the downloaded PDF
+        pdf_path = f"/tmp/{key.split('/')[-1]}"
+        
+        # Download the PDF from S3
+        download_from_s3(bucket, key, pdf_path)
 
-    # Log the filtered chunks
-    logger.info(f"Filtered chunks: {filtered_chunks}")
+        # Process the PDF
+        pages_and_texts = open_and_read_pdf(pdf_path)
+        pages_and_texts = process_text_with_spacy(pages_and_texts)
+        pages_and_texts = chunk_sentences(pages_and_texts)
+        pages_and_chunks = create_chunks(pages_and_texts)
+        filtered_chunks = filter_chunks_by_token_length(pages_and_chunks, MIN_TOKEN_LENGTH)
+
+        # Log the filtered chunks
+        logger.info(f"Filtered chunks: {filtered_chunks}")
+
+        # Upload filtered chunks to S3
+        upload_to_s3(S3_BUCKET_NAME, FILTERED_CHUNKS_FILE_KEY, filtered_chunks)
+
+        # Trigger the second Lambda function with S3 event
+        invoke_second_lambda_with_s3_trigger()
 
     return {
         'statusCode': 200,
-        'body': filtered_chunks
+        'body': json.dumps({'message': 'Chunks processed and stored to s3.'})
     }
