@@ -1,19 +1,17 @@
 FROM public.ecr.aws/lambda/python:3.12
 
-# Install distutils
-RUN yum install -y python3-distutils
+# Install pip and distutils
+RUN pip install --upgrade pip && \
+    pip install setuptools
 
 # Copy requirements.txt to the container
 COPY requirements.txt ${LAMBDA_TASK_ROOT}
 
-# Upgrade pip to the latest version
-RUN pip install --upgrade pip
-
-# Install the required packages
+# Install dependencies
 RUN pip install -r requirements.txt
 
-# Copy the function code to the container
+# Copy the source code to the container
 COPY src/* ${LAMBDA_TASK_ROOT}
 
-# Set the CMD to your handler
-CMD ["main.lambda_handler"]
+# Set the CMD to your handler (could also be done as a parameter override outside of Dockerfile)
+CMD ["main.handler"]

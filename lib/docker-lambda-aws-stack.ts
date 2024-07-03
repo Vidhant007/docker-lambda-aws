@@ -11,7 +11,7 @@ export class DockerLambdaAwsStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Create a VPC for the Redis cluster
+    // Create a VPC for the Redis cluster and Lambda functions
     const vpc = new ec2.Vpc(this, 'Vpc', {
       maxAzs: 2, 
     });
@@ -22,13 +22,21 @@ export class DockerLambdaAwsStack extends cdk.Stack {
       subnetIds: vpc.selectSubnets({ subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }).subnetIds,
     });
 
+    // Security group for Redis
     const redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
       vpc,
       allowAllOutbound: true,
       description: 'Security group for Redis cluster',
     });
-
     redisSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(6379), 'Allow Redis traffic');
+
+    // Security group for Lambda
+    const lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
+      vpc,
+      allowAllOutbound: true,
+      description: 'Security group for Lambda functions',
+    });
+    lambdaSecurityGroup.addIngressRule(redisSecurityGroup, ec2.Port.tcp(6379), 'Allow Lambda to access Redis');
 
     // Create the Redis cluster
     const redisCluster = new elasticache.CfnCacheCluster(this, 'RedisCluster', {
@@ -62,6 +70,8 @@ export class DockerLambdaAwsStack extends cdk.Stack {
         'logs:*',
         'cloudwatch:*',
         'lambda:*',
+        'ec2:*',
+
       ],
     }));
 
@@ -73,6 +83,8 @@ export class DockerLambdaAwsStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(100),
       architecture: lambda.Architecture.X86_64,
       role: lambdaRole,
+      vpc,
+      securityGroups: [lambdaSecurityGroup],
     });
 
     // Define an S3 bucket
@@ -109,6 +121,8 @@ export class DockerLambdaAwsStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(100),
       architecture: lambda.Architecture.X86_64,
       role: lambdaRole,
+      vpc,
+      securityGroups: [lambdaSecurityGroup],
     });
 
     // Add environment variables to the Chunk-Embedder Lambda function

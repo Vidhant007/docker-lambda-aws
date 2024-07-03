@@ -19,7 +19,6 @@ NUM_SENTENCE_CHUNK_SIZE = 10
 MIN_TOKEN_LENGTH = 30
 SECOND_LAMBDA_NAME = "arn:aws:lambda:ap-south-1:808300628517:function:Chunk-Embedder"
 AWS_REGION = "ap-south-1"
-S3_BUCKET_NAME = "rag-chunk-storage"
 FILTERED_CHUNKS_FILE_KEY = "filtered_chunks.json"
 
 def download_from_s3(bucket: str, key: str, download_path: str):
@@ -84,17 +83,17 @@ def upload_to_s3(bucket_name, file_key, data):
     s3 = boto3.client('s3', region_name=AWS_REGION)
     s3.put_object(Bucket=bucket_name, Key=file_key, Body=json.dumps(data))
 
-def invoke_second_lambda_with_s3_trigger():
+def invoke_second_lambda_with_s3_trigger(bucket, key):
     lambda_client = boto3.client('lambda', region_name=AWS_REGION)
     lambda_client.invoke(
         FunctionName=SECOND_LAMBDA_NAME,
         InvocationType='Event',  # Asynchronous invocation
         Payload=json.dumps({
-            "bucket": S3_BUCKET_NAME,
-            "key": FILTERED_CHUNKS_FILE_KEY
+            "bucket": bucket,
+            "key": key
         })
     )
-    logger.info(f"Second Lambda function triggered with S3 file: s3://{S3_BUCKET_NAME}/{FILTERED_CHUNKS_FILE_KEY}")
+    logger.info(f"Second Lambda function triggered with S3 file: s3://{bucket}/{key}")
 
 def handler(event, context):
     # Log the received event
@@ -121,11 +120,11 @@ def handler(event, context):
         # Log the filtered chunks
         logger.info(f"Filtered chunks: {filtered_chunks}")
 
-        # Upload filtered chunks to S3
-        upload_to_s3(S3_BUCKET_NAME, FILTERED_CHUNKS_FILE_KEY, filtered_chunks)
+        # Upload filtered chunks to the same S3 bucket
+        upload_to_s3(bucket, FILTERED_CHUNKS_FILE_KEY, filtered_chunks)
 
         # Trigger the second Lambda function with S3 event
-        invoke_second_lambda_with_s3_trigger()
+        invoke_second_lambda_with_s3_trigger(bucket, FILTERED_CHUNKS_FILE_KEY)
 
     return {
         'statusCode': 200,
